@@ -279,13 +279,14 @@ class MainActivity : ComponentActivity() {
         startListening()
     }
 
+    // ИСПРАВЛЕНО: Используем setSurfaceProvider вместо устаревшего surfaceProvider
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             try {
                 val provider = future.get()
                 val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
+                    it.setSurfaceProvider(previewView.surfaceProvider)
                 }
                 val selector = CameraSelector.Builder()
                     .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
@@ -356,6 +357,7 @@ class MainActivity : ComponentActivity() {
         recorder = null
     }
 
+    // ИСПРАВЛЕНО: Обработка возможного null для file
     private fun finishRecordingAndSend() {
         isRecording = false
         val rec = recorder
@@ -366,7 +368,7 @@ class MainActivity : ComponentActivity() {
         try { rec?.stop() } catch (e: Exception) { Log.w(TAG, "stop()", e) }
         try { rec?.release() } catch (_: Exception) {}
 
-        if (!heardSomething) {
+        if (!heardSomething || file == null) {
             file?.delete()
             startListening()
             return
@@ -396,6 +398,7 @@ class MainActivity : ComponentActivity() {
                             "Ошибка сети: ${e.message ?: "сервер не отвечает"}")
                     }
 
+                    // ИСПРАВЛЕНО: Безопасное обращение к body()
                     override fun onResponse(call: Call, response: Response) {
                         response.use { resp ->
                             if (!resp.isSuccessful) {
@@ -403,7 +406,12 @@ class MainActivity : ComponentActivity() {
                                     "Сервер ответил кодом ${resp.code}")
                                 return
                             }
-                            val respJson = JSONObject(resp.body.string())
+                            val bodyStr = resp.body?.string()
+                            if (bodyStr == null) {
+                                showErrorAndRestart("Пустой ответ от сервера")
+                                return
+                            }
+                            val respJson = JSONObject(bodyStr)
                             if (respJson.optString("status") != "ok") {
                                 showErrorAndRestart(
                                     "Ошибка сервера: ${
