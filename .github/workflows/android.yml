@@ -15,14 +15,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7
+          gradle-version: "8.7"
+
+      - name: Verify toolchain
+        run: |
+          java -version
+          gradle --version
 
       - name: Build debug APK
-        working-directory: ./android
-        run: gradle -b build.gradle -c settings.gradle assembleDebug --no-daemon
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
