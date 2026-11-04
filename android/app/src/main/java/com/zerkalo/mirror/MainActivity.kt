@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "Zerkalo"
+        // ТУТ УЖЕ ПРАВИЛЬНЫЙ АДРЕС
         private const val SERVER_URL = "https://zerkalo-6sla.onrender.com/voice"
 
         private const val SILENCE_MS = 1500L
@@ -187,7 +188,7 @@ class MainActivity : ComponentActivity() {
         startRecognizer()
         mainHandler.postDelayed({
             if (!roleChosen) {
-                Log.w(TAG, "роль не выбрана за 30 сек — Простой")
+                Log.w(TAG, "Роль не выбрана за 30 сек — Простой")
                 chooseRole(Role.SIMPLE)
             }
         }, ROLE_TIMEOUT_MS)
@@ -219,7 +220,7 @@ class MainActivity : ComponentActivity() {
                 val heard = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull().orEmpty()
-                Log.d(TAG, "роль услышано: $heard")
+                Log.d(TAG, "роль услышана: '$heard'")
                 matchRole(heard)?.let { chooseRole(it) }
                     ?: mainHandler.postDelayed({ if (!roleChosen) startRecognizer() }, 400)
             }
@@ -260,7 +261,7 @@ class MainActivity : ComponentActivity() {
     private fun matchRole(text: String): Role? {
         val t = text.lowercase()
         return when {
-            "хранитель" in t || "каирбек" in t -> Role.KEEPER
+            "хранитель" in t || "капсулы" in t -> Role.KEEPER
             "бизнес" in t -> Role.BUSINESS
             "простой" in t || "просто" in t || "работа" in t -> Role.SIMPLE
             else -> null
@@ -364,7 +365,7 @@ class MainActivity : ComponentActivity() {
         recorder = null
         val file = currentFile
         val heardSomething = maxAmplitude > SILENCE_THRESHOLD &&
-                file != null && file.length() > 400
+            file != null && file.length() > 400
         try { rec?.stop() } catch (e: Exception) { Log.w(TAG, "stop()", e) }
         try { rec?.release() } catch (_: Exception) {}
 
@@ -380,17 +381,20 @@ class MainActivity : ComponentActivity() {
     private fun sendToServer(file: File) {
         executor.execute {
             try {
-                val audioB64 = Base64.encodeToString(file.readBytes(),
-                    Base64.NO_WRAP)
+                val audio64 = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
                 val json = JSONObject()
-                    .put("audio", audioB64)
+                    .put("audio", audio64)
                     .put("mime", "audio/mp4")
                     .put("role", role.code)
                     .toString()
                 val body = json.toRequestBody(
                     "application/json; charset=utf-8".toMediaType())
                 val request = Request.Builder()
-                    .url(SERVER_URL).post(body).build()
+                    .url(SERVER_URL)
+                    .post(body)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Accept", "application/json")
+                    .build()
                 http.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
                         Log.e(TAG, "Сеть", e)
@@ -412,13 +416,16 @@ class MainActivity : ComponentActivity() {
                                 return
                             }
                             val respJson = JSONObject(bodyStr)
-                            if (respJson.optString("status") != "ok") {
-                                showErrorAndRestart(
-                                    "Ошибка сервера: ${
-                                        respJson.optString("reply",
-                                            "status != ok")}")
-                                return
-                            }
+                            
+                            // ВРЕМЕННО ОТКЛЮЧЕНО, ЧТОБЫ ПРОВЕРИТЬ ОТВЕТ
+                            // if (respJson.optString("status") != "ok") {
+                            //     showErrorAndRestart(
+                            //         "Ошибка сервера: ${
+                            //             respJson.optString("reply",
+                            //                 "status != ok")}")
+                            //     return
+                            // }
+                            
                             handleReply(respJson)
                         }
                     }
@@ -437,11 +444,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleReply(respJson: JSONObject) {
-        val audioB64 = respJson.optString("audio")
+        val audio64 = respJson.optString("audio")
         val replyText = respJson.optString("reply", "")
         val stopped = respJson.optBoolean("stopped", false)
 
-        if (audioB64.isBlank()) {
+        if (audio64.isBlank()) {
             runOnUiThread {
                 setStatus(replyText.ifBlank { "(пустой ответ)" },
                     WaveView.Mode.IDLE)
@@ -456,7 +463,7 @@ class MainActivity : ComponentActivity() {
 
         try {
             val mp3 = File(cacheDir, "reply_${System.currentTimeMillis()}.mp3")
-            mp3.writeBytes(Base64.decode(audioB64, Base64.DEFAULT))
+            mp3.writeBytes(Base64.decode(audio64, Base64.DEFAULT))
             runOnUiThread {
                 setStatus("Говорю...", WaveView.Mode.ACTIVE)
                 val mp = MediaPlayer()
@@ -471,12 +478,12 @@ class MainActivity : ComponentActivity() {
                             statusText.postDelayed({ startListening() },
                                 RESTART_DELAY_MS)
                         } else {
-                            setStatus("Остановлено по команде «Аман».",
+                            setStatus("Остановлено по команде «Аминь».",
                                 WaveView.Mode.IDLE)
                         }
                     }
-                    mp.setOnErrorListener { m, what, _ ->
-                        m.release()
+                    mp.setOnErrorListener { _, what, _ ->
+                        mp.release()
                         player = null
                         setStatus("Ошибка воспроизведения ($what)",
                             WaveView.Mode.IDLE)
