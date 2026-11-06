@@ -1,38 +1,59 @@
-from flask import Flask, request, jsonify
+import logging
 import os
+import time
+import uuid
+
+from flask import Flask, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
 
+app.config["DEBUG"] = False
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
+logger = logging.getLogger("mirror-backend")
+
+
 @app.before_request
-def log_request():
-    app.logger.info(f"Request: {request.method} {request.path}")
+def before_request_logging():
+    g.request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    g.request_start_time = time.perf_counter()
 
-@app.route('/', methods=['GET'])
-def home():
-    return "Server is running", 200
+    logger.info(
+        "Incoming request: id=%s method=%s path=%s remote=%s content_type=%s content_length=%s",
+        g.request_id,
+        request.method,
+        request.path,
+        request.remote_addr,
+        request.content_type,
+        request.content_length,
+    )
 
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "ok"}), 200
 
-@app.route('/voice', methods=['POST'], strict_slashes=False)
-def handle_voice():
-    data = request.get_json(silent=True) or {}
-    return jsonify({
-        "status": "success",
-        "text": "Запрос принят"
-    }), 200
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "service": "mirror-backend"}), 200
 
-@app.errorhandler(404)
-def not_found(e):
-    app.logger.warning(f"404 Not Found: {request.method} {request.path}")
-    return jsonify({
-        "status": "error",
-        "error": "not_found",
-        "method": request.method,
-        "path": request.path
-    }), 404
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+@app.route("/voice", methods=["POST"], strict_slashes=False)
+def voice():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Invalid JSON"}), 400
+
+    user_text = data.get("text")
+    if not user_text:
+        return jsonify({"success": False, "error": "Missing text"}), 400
+
+    logger.info("Processing voice request: %s", user_text)
+
+    return jsonify({"success": True, "response": f"Эхо: {user_text}"}), 200
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
