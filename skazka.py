@@ -1,39 +1,47 @@
 import os
 import logging
+import requests
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
-import requests
 
-# Настройка логов
+# --- НАСТРОЙКА ЛОГОВ ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ключи из Render
+# --- НАСТРОЙКА FLASK (чтобы Render видел сайт и не выключал бота) ---
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Zerkalo Skazka Bot is running!", 200
+
+# --- ПОЛУЧЕНИЕ КЛЮЧЕЙ ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 
-# Настройка Gemini
+# --- НАСТРОЙКА GEMINI ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+# Используем актуальную модель
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Обработчик команды /start
+# --- ФУНКЦИИ БОТА ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет, Хранитель! 👋\n"
-        "Напиши мне имя ребенка и тему (например: «Тимур, динозавры»), "
-        "и я создам волшебную сказку."
+        "Привет! 👋\n"
+        "Я — Зеркало. Напиши мне имя ребенка и тему (например: «Тимур, динозавры»), "
+        "и я создам волшебную сказку и озвучу её голосом."
     )
 
-# Обработчик текста (создание сказки)
 async def generate_skazka(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
-    await update.message.reply_text("🧚‍♂️ Придумываю сказку, подожди немного...")
+    await update.message.reply_text("🧚‍♂️ Придумываю сказку, подожди 10-15 секунд...")
 
     try:
         # 1. Генерация текста через Gemini
-        prompt = f"Ты — детский писатель. Напиши добрую сказку на ночь по запросу: {user_text}. Сказка должна быть короткой (3-4 абзаца), с хорошим концом."
+        prompt = f"Ты — детский писатель. Напиши добрую сказку на ночь по запросу: {user_text}. Сказка должна быть короткой (3-4 абзаца), с хорошим концом. Не используй сложные слова."
         response = model.generate_content(prompt)
         story_text = response.text
 
@@ -43,7 +51,8 @@ async def generate_skazka(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 3. Генерация аудио через ElevenLabs
         await update.message.reply_text("🎙 Озвучиваю сказку голосом...")
         
-        url = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM" # Голос по умолчанию
+        # Голос "Rachel" (стандартный)
+        url = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM" 
         headers = {
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
@@ -55,32 +64,38 @@ async def generate_skazka(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "voice_settings": {"stability": 0.5, "similarity_boost": 0.5}
         }
         
-        response_audio = requests.post(url, json=data, headers=headers)
+        response_audio = requests.post(url, json=data, headers=headers, timeout=30)
         
         if response_audio.status_code == 200:
             with open("skazka.mp3", "wb") as f:
                 f.write(response_audio.content)
             
-            # Отправка аудио
             with open("skazka.mp3", "rb") as audio:
                 await update.message.reply_voice(voice=audio)
             os.remove("skazka.mp3")
         else:
+            logger.error(f"ElevenLabs Error: {response_audio.text}")
             await update.message.reply_text("Голос временно недоступен, но текст сказки у тебя есть!")
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await update.message.reply_text("Прости, Хранитель, произошла ошибка. Попробуй еще раз.")
+        await update.message.reply_text(f"Прости, произошла ошибка: {e}")
 
-# Главная функция запуска бота
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+# --- ЗАПУСК БОТА В ФОНЕ ---
+def run_bot():
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_skazka))
     
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, generate_skazka))
-    
-    logger.info("Бот запущен!")
-    app.run_polling()
+    logger.info("Бот запущен и слушает Telegram!")
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    # Запускаем бота в отдельном потоке, чтобы Flask мог работать
+    import threading
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.start()
+    
+    # Запускаем Flask (для Render)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
